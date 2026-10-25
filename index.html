@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="de">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Freedom Fighter Simulator uwu</title>
+        <style>
+            * {
+                box-sizing: border-box;
+            }
+
+            body {
+                margin: 0;
+                padding: 24px 16px 40px;
+                background-color: lightpink;
+                text-align: center;
+                color: #24151b;
+                font-family: Arial, sans-serif;
+            }
+
+            h1 {
+                font-size: clamp(1.5rem, 5vw, 2rem);
+            }
+
+            .meme {
+                display: block;
+                width: min(100%, 360px);
+                height: auto;
+                margin: 0 auto;
+            }
+
+            main {
+                width: min(100%, 800px);
+                margin: 36px auto 0;
+            }
+
+            h2 {
+                margin-bottom: 8px;
+            }
+
+            .instructions {
+                margin-top: 0;
+            }
+
+            .scoreboard {
+                display: flex;
+                justify-content: center;
+                gap: 28px;
+                margin: 18px 0 10px;
+                font-weight: bold;
+            }
+
+            canvas {
+                display: block;
+                width: 100%;
+                height: auto;
+                border: 2px solid #24151b;
+                border-radius: 10px;
+                background: #fff8fa;
+                touch-action: manipulation;
+            }
+
+            button {
+                margin-top: 14px;
+                padding: 10px 24px;
+                border: 2px solid #24151b;
+                border-radius: 8px;
+                background: #fff8fa;
+                color: #24151b;
+                font: inherit;
+                font-weight: bold;
+                cursor: pointer;
+            }
+
+            button:hover {
+                background: #f6dce4;
+            }
+
+            @media (max-width: 600px) {
+                body {
+                    padding: 14px 12px 28px;
+                }
+
+                .meme {
+                    width: min(78vw, 280px);
+                }
+
+                main {
+                    margin-top: 24px;
+                }
+
+                .scoreboard {
+                    gap: 20px;
+                }
+
+                button {
+                    min-height: 44px;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <h1>took u long enough im free guys</h1>
+        <img class="meme" src="afcd60d7-fa10-4df7-aaff-c038689c3ab2.jpg" alt="Ein Screenshot eines Social-Media-Profils.">
+
+        <main>
+            <h2>Freedom Fighter Simulator uwu</h2>
+            <p class="instructions">Drücke die Leertaste, die Pfeiltaste nach oben oder tippe auf das Spielfeld, um zu springen.</p>
+            <div class="scoreboard" aria-live="polite">
+                <span>Punkte: <span id="score">0</span></span>
+                <span>Bestwert: <span id="high-score">0</span></span>
+            </div>
+            <canvas id="game" width="800" height="240" aria-label="Endloses Laufspiel: Springe über schwarze Buchstaben."></canvas>
+            <button id="start-button" type="button">Spiel starten</button>
+        </main>
+
+        <script>
+            const canvas = document.getElementById("game");
+            const context = canvas.getContext("2d");
+            const startButton = document.getElementById("start-button");
+            const scoreOutput = document.getElementById("score");
+            const highScoreOutput = document.getElementById("high-score");
+            const playerImage = new Image();
+            playerImage.src = "spieler.png";
+
+            const targetSentence = "took u long enough im free guys";
+            const letters = [...targetSentence].flatMap((character, index) => character === " "
+                ? []
+                : [{ character, endsWord: targetSentence[index + 1] === " " }]);
+            const groundY = 194;
+            const player = { x: 76, y: groundY - 54, size: 54, velocityY: 0 };
+            const jumpSpeed = 590;
+            const gravity = 1550;
+            const jumpBufferDuration = 0.15;
+            let obstacles = [];
+            let isRunning = false;
+            let hasStarted = false;
+            let score = 0;
+            let highScore = Number(localStorage.getItem("letterRunnerHighScore")
+                ?? localStorage.getItem("buchstabenLaufBestwert")) || 0;
+            let letterIndex = 0;
+            let worldDistance = 0;
+            let nextObstacleDistance = 260;
+            let gameSpeed = 420;
+            let lastFrameTime = 0;
+            let animationFrame = null;
+            let jumpBufferRemaining = 0;
+
+            highScoreOutput.textContent = highScore;
+
+            function drawGame() {
+                context.clearRect(0, 0, canvas.width, canvas.height);
+                context.fillStyle = "#24151b";
+                context.fillRect(0, groundY, canvas.width, 2);
+
+                if (playerImage.complete && playerImage.naturalWidth) {
+                    context.save();
+                    context.beginPath();
+                    context.arc(player.x + player.size / 2, player.y + player.size / 2, player.size / 2, 0, Math.PI * 2);
+                    context.clip();
+                    const cropSize = playerImage.naturalHeight * 0.94;
+                    const cropX = playerImage.naturalWidth * 0.35;
+                    const cropY = (playerImage.naturalHeight - cropSize) / 2;
+                    context.drawImage(playerImage, cropX, cropY, cropSize, cropSize,
+                        player.x, player.y, player.size, player.size);
+                    context.restore();
+                } else {
+                    context.fillStyle = "#aaa";
+                    context.beginPath();
+                    context.arc(player.x + player.size / 2, player.y + player.size / 2, player.size / 2, 0, Math.PI * 2);
+                    context.fill();
+                }
+
+                context.fillStyle = "#000";
+                context.font = "bold 34px Arial, sans-serif";
+                for (const obstacle of obstacles) {
+                    context.fillText(obstacle.character, obstacle.x, groundY - 8);
+                }
+
+                if (!hasStarted) {
+                    context.fillStyle = "#24151b";
+                    context.font = "bold 22px Arial, sans-serif";
+                    context.textAlign = "center";
+                    context.fillText("Bereit? Drücke „Spiel starten“", canvas.width / 2, 70);
+                    context.textAlign = "left";
+                } else if (!isRunning) {
+                    context.fillStyle = "#24151b";
+                    context.font = "bold 26px Arial, sans-serif";
+                    context.textAlign = "center";
+                    context.fillText("Spiel vorbei!", canvas.width / 2, 70);
+                    context.font = "18px Arial, sans-serif";
+                    context.fillText("Drücke „Neu starten“ für die nächste Runde.", canvas.width / 2, 101);
+                    context.textAlign = "left";
+                }
+            }
+
+            function updateGame(timestamp) {
+                if (!isRunning) {
+                    drawGame();
+                    return;
+                }
+
+                const delta = Math.min((timestamp - lastFrameTime) / 1000, 0.04);
+                lastFrameTime = timestamp;
+                worldDistance += gameSpeed * delta;
+                jumpBufferRemaining = Math.max(0, jumpBufferRemaining - delta);
+
+                if (jumpBufferRemaining > 0 && player.y + player.size >= groundY) {
+                    player.velocityY = -jumpSpeed;
+                    jumpBufferRemaining = 0;
+                }
+
+                player.velocityY += gravity * delta;
+                player.y += player.velocityY * delta;
+                if (player.y + player.size >= groundY) {
+                    player.y = groundY - player.size;
+                    player.velocityY = 0;
+                }
+
+                if (worldDistance >= nextObstacleDistance) {
+                    const letter = letters[letterIndex];
+                    obstacles.push({ character: letter.character, x: canvas.width });
+                    letterIndex = (letterIndex + 1) % letters.length;
+                    nextObstacleDistance += letter.endsWord ? 760 : 600;
+                }
+
+                for (const obstacle of obstacles) {
+                    obstacle.x -= gameSpeed * delta;
+                    const obstacleWidth = 22;
+                    const obstacleHeight = 34;
+                    if (obstacle.x < player.x + player.size - 8
+                        && obstacle.x + obstacleWidth > player.x + 8
+                        && player.y + player.size > groundY - obstacleHeight) {
+                        endGame();
+                    }
+                    if (!obstacle.counted && obstacle.x + obstacleWidth < player.x) {
+                        obstacle.counted = true;
+                        score += 10;
+                        scoreOutput.textContent = score;
+                        if (score > highScore) {
+                            highScore = score;
+                            highScoreOutput.textContent = highScore;
+                            localStorage.setItem("letterRunnerHighScore", highScore);
+                        }
+                    }
+                }
+                obstacles = obstacles.filter((obstacle) => obstacle.x > -40);
+                gameSpeed = Math.min(420 + score * 0.8, 680);
+                drawGame();
+                if (isRunning) {
+                    animationFrame = requestAnimationFrame(updateGame);
+                }
+            }
+
+            function endGame() {
+                isRunning = false;
+                startButton.textContent = "Neu starten";
+            }
+
+            function jump() {
+                if (isRunning) {
+                    jumpBufferRemaining = jumpBufferDuration;
+                }
+            }
+
+            function startGame() {
+                if (animationFrame !== null) {
+                    cancelAnimationFrame(animationFrame);
+                }
+                score = 0;
+                scoreOutput.textContent = score;
+                letterIndex = 0;
+                worldDistance = 0;
+                nextObstacleDistance = 260;
+                gameSpeed = 420;
+                obstacles = [];
+                player.y = groundY - player.size;
+                player.velocityY = 0;
+                jumpBufferRemaining = 0;
+                hasStarted = true;
+                isRunning = true;
+                startButton.textContent = "Neu starten";
+                lastFrameTime = performance.now();
+                animationFrame = requestAnimationFrame(updateGame);
+            }
+
+            startButton.addEventListener("click", startGame);
+            canvas.addEventListener("pointerdown", jump);
+            document.addEventListener("keydown", (event) => {
+                if (["Space", "ArrowUp"].includes(event.code)) {
+                    event.preventDefault();
+                    if (!hasStarted || !isRunning) {
+                        startGame();
+                    } else {
+                        jump();
+                    }
+                } else if (event.code === "Enter" && (!hasStarted || !isRunning)) {
+                    startGame();
+                }
+            });
+            drawGame();
+        </script>
+    </body>
+</html>
